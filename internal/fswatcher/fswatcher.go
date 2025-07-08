@@ -150,6 +150,7 @@ func (w *FSWatcher) isModified(filePathName string, previousHash string) (bool, 
 // redactPath redacts the filename portion of a file path by hashing it
 // while preserving the directory structure and file extension.
 // This is used to prevent logging sensitive file paths.
+// been solved
 func redactPath(filePath string) string {
 	if filePath == "" {
 		return filePath
