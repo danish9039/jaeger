@@ -5,6 +5,7 @@ package memory
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -257,10 +258,14 @@ func validSpan(resourceAttributes pcommon.Map, scope pcommon.InstrumentationScop
 	}
 
 	if errAttribute, ok := query.Attributes.Get(errorAttribute); ok {
-		if errAttribute.Bool() && span.Status().Code() != ptrace.StatusCodeError {
+		errorVal, valid := errorQueryValue(errAttribute)
+		if !valid {
 			return false
 		}
-		if !errAttribute.Bool() && span.Status().Code() != ptrace.StatusCodeOk {
+		if errorVal && span.Status().Code() != ptrace.StatusCodeError {
+			return false
+		}
+		if !errorVal && span.Status().Code() != ptrace.StatusCodeOk {
 			return false
 		}
 	}
@@ -300,8 +305,7 @@ func validSpan(resourceAttributes pcommon.Map, scope pcommon.InstrumentationScop
 			continue
 		}
 
-		if strings.HasPrefix(key, "resource.") {
-			resourceKey := strings.TrimPrefix(key, "resource.")
+		if resourceKey, ok := strings.CutPrefix(key, "resource."); ok {
 			if !matchAttributes(resourceKey, val, resourceAttributes) {
 				return false
 			}
@@ -333,6 +337,11 @@ func findKeyValInTrace(key string, val pcommon.Value, resourceAttributes pcommon
 			return true
 		}
 	}
+	for _, link := range span.Links().All() {
+		if matchAttributes(key, val, link.Attributes()) {
+			return true
+		}
+	}
 	return tagsMatched
 }
 
@@ -341,6 +350,21 @@ func fromOTELSpanKind(kind ptrace.SpanKind) string {
 		return ""
 	}
 	return strings.ToLower(kind.String())
+}
+
+func errorQueryValue(attr pcommon.Value) (value bool, valid bool) {
+	switch attr.Type() {
+	case pcommon.ValueTypeBool:
+		return attr.Bool(), true
+	case pcommon.ValueTypeStr:
+		val, err := strconv.ParseBool(attr.Str())
+		if err != nil {
+			return false, false
+		}
+		return val, true
+	default:
+		return false, false
+	}
 }
 
 func spanStatusFromString(statusStr string) ptrace.StatusCode {

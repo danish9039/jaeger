@@ -30,10 +30,10 @@ import (
 	"github.com/jaegertracing/jaeger/internal/metrics"
 	es "github.com/jaegertracing/jaeger/internal/storage/elasticsearch"
 	escfg "github.com/jaegertracing/jaeger/internal/storage/elasticsearch/config"
-	"github.com/jaegertracing/jaeger/internal/storage/elasticsearch/dbmodel"
 	"github.com/jaegertracing/jaeger/internal/storage/elasticsearch/mocks"
-	"github.com/jaegertracing/jaeger/internal/storage/v1/elasticsearch/spanstore"
 	esdepstorev2 "github.com/jaegertracing/jaeger/internal/storage/v2/elasticsearch/depstore"
+	"github.com/jaegertracing/jaeger/internal/storage/v2/elasticsearch/tracestore/core"
+	"github.com/jaegertracing/jaeger/internal/storage/v2/elasticsearch/tracestore/core/dbmodel"
 	"github.com/jaegertracing/jaeger/internal/testutils"
 )
 
@@ -57,9 +57,9 @@ func TestElasticsearchFactoryBase(t *testing.T) {
 	f, err := NewFactoryBase(context.Background(), cfg, metrics.NullFactory, zaptest.NewLogger(t), nil)
 	require.NoError(t, err)
 	readerParams := f.GetSpanReaderParams()
-	assert.IsType(t, spanstore.SpanReaderParams{}, readerParams)
+	assert.IsType(t, core.SpanReaderParams{}, readerParams)
 	writerParams := f.GetSpanWriterParams()
-	assert.IsType(t, spanstore.SpanWriterParams{}, writerParams)
+	assert.IsType(t, core.SpanWriterParams{}, writerParams)
 	depParams := f.GetDependencyStoreParams()
 	assert.IsType(t, esdepstorev2.Params{}, depParams)
 	_, err = f.CreateSamplingStore(1)
@@ -275,12 +275,12 @@ func TestCreateTemplates(t *testing.T) {
 			IndexPrefix: test.indexPrefix,
 			Spans: escfg.IndexOptions{
 				Shards:   3,
-				Replicas: ptr(int64(1)),
+				Replicas: new(int64(1)),
 				Priority: 10,
 			},
 			Services: escfg.IndexOptions{
 				Shards:   3,
-				Replicas: ptr(int64(1)),
+				Replicas: new(int64(1)),
 				Priority: 10,
 			},
 		}}
@@ -389,7 +389,8 @@ func runPasswordFromFileTest(t *testing.T) {
 			}),
 		},
 		BulkProcessing: escfg.BulkProcessing{
-			MaxBytes: -1, // disable bulk; we want immediate flush
+			MaxBytes:   -1, // disable bulk
+			MaxActions: -1, // disable bulk; the test only validates auth headers
 		},
 	}
 	f, err := NewFactoryBase(context.Background(), cfg, metrics.NullFactory, zap.NewNop(), nil)
@@ -398,7 +399,7 @@ func runPasswordFromFileTest(t *testing.T) {
 		require.NoError(t, f.Close())
 	})
 
-	writer := spanstore.NewSpanWriter(f.GetSpanWriterParams())
+	writer := core.NewSpanWriter(f.GetSpanWriterParams())
 	span1 := &dbmodel.Span{
 		Process: dbmodel.Process{ServiceName: "foo"},
 	}
@@ -464,6 +465,10 @@ func TestPasswordFromFileErrors(t *testing.T) {
 				PasswordFilePath: pwdFile,
 			}),
 		},
+		BulkProcessing: escfg.BulkProcessing{
+			MaxBytes:   -1, // disable bulk
+			MaxActions: -1, // disable bulk; the test only validates error paths
+		},
 	}
 
 	logger, buf := testutils.NewEchoLogger(t)
@@ -506,6 +511,10 @@ func TestElasticsearchFactoryBaseWithAuthenticator(t *testing.T) {
 	cfg := escfg.Configuration{
 		Servers:  []string{server.URL},
 		LogLevel: "debug",
+		BulkProcessing: escfg.BulkProcessing{
+			MaxBytes:   -1, // disable bulk
+			MaxActions: -1, // disable bulk; the test only validates authenticator setup
+		},
 	}
 
 	// Mock authenticator
@@ -518,7 +527,7 @@ func TestElasticsearchFactoryBaseWithAuthenticator(t *testing.T) {
 
 	// Verify factory is properly initialized with authenticator
 	readerParams := f.GetSpanReaderParams()
-	assert.IsType(t, spanstore.SpanReaderParams{}, readerParams)
+	assert.IsType(t, core.SpanReaderParams{}, readerParams)
 }
 
 // mockHTTPAuthenticator implements extensionauth.HTTPClient for testing

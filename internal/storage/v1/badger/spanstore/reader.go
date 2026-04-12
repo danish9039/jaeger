@@ -11,13 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/dgraph-io/badger/v4"
 	"golang.org/x/exp/maps"
 
 	"github.com/jaegertracing/jaeger-idl/model/v1"
 	"github.com/jaegertracing/jaeger/internal/storage/v1/api/spanstore"
+	"github.com/jaegertracing/jaeger/internal/storage/v2/api/tracestore"
 )
 
 // Most of these errors are common with the ES and Cassandra backends. Each backend has slightly different validation rules.
@@ -208,9 +209,9 @@ func (r *TraceReader) scanTimeRange(plan *executionPlan) ([]model.TraceID, error
 		return nil
 	})
 
-	sort.Slice(traceKeys, func(k, h int) bool {
+	slices.SortFunc(traceKeys, func(a, b []byte) int {
 		// This sorts by timestamp to descending order
-		return bytes.Compare(traceKeys[k][sizeOfTraceID+1:sizeOfTraceID+1+8], traceKeys[h][sizeOfTraceID+1:sizeOfTraceID+1+8]) > 0
+		return bytes.Compare(b[sizeOfTraceID+1:sizeOfTraceID+1+8], a[sizeOfTraceID+1:sizeOfTraceID+1+8])
 	})
 
 	sizeCount := len(traceKeys)
@@ -245,8 +246,8 @@ func (r *TraceReader) GetServices(context.Context) ([]string, error) {
 // GetOperations fetches operations in the service and empty slice if service does not exists
 func (r *TraceReader) GetOperations(
 	_ context.Context,
-	query spanstore.OperationQueryParameters,
-) ([]spanstore.Operation, error) {
+	query tracestore.OperationQueryParams,
+) ([]tracestore.Operation, error) {
 	return r.cache.GetOperations(query.ServiceName)
 }
 
@@ -294,14 +295,12 @@ func (r *TraceReader) indexSeeksToTraceIDs(plan *executionPlan, indexSeeks [][]b
 			return nil, err
 		}
 
-		sort.Slice(indexResults, func(k, h int) bool {
-			return bytes.Compare(indexResults[k], indexResults[h]) < 0
-		})
+		slices.SortFunc(indexResults, bytes.Compare)
 
 		// Same traceID can be returned multiple times, but always in sorted order so checking the previous key is enough
 		prevTraceID := []byte{}
 		innerIDs := make([][]byte, 0, len(indexSeeks))
-		for j := 0; j < len(indexResults); j++ {
+		for j := range indexResults {
 			traceID := indexResults[j]
 			if !bytes.Equal(prevTraceID, traceID) {
 				innerIDs = append(innerIDs, traceID)
@@ -340,7 +339,7 @@ func filterIDs(plan *executionPlan, innerIDs [][]byte) []model.TraceID {
 	traces := make([]model.TraceID, 0, plan.limit)
 
 	items := 0
-	for i := 0; i < len(innerIDs); i++ {
+	for i := range innerIDs {
 		trID := bytesToTraceID(innerIDs[i])
 
 		if _, found := plan.hashOuter[trID]; found {
@@ -368,7 +367,7 @@ func buildHash(plan *executionPlan, outerIDs [][]byte) map[model.TraceID]struct{
 	var empty struct{}
 
 	hashed := make(map[model.TraceID]struct{})
-	for i := 0; i < len(outerIDs); i++ {
+	for i := range outerIDs {
 		trID := bytesToTraceID(outerIDs[i])
 
 		if plan.hashOuter != nil {

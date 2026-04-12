@@ -5,7 +5,7 @@
 package integration
 
 import (
-	"bytes"
+	"cmp"
 	"context"
 	"embed"
 	"encoding/binary"
@@ -14,13 +14,10 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -33,7 +30,6 @@ import (
 	samplemodel "github.com/jaegertracing/jaeger/internal/storage/v1/api/samplingstore/model"
 	"github.com/jaegertracing/jaeger/internal/storage/v2/api/depstore"
 	"github.com/jaegertracing/jaeger/internal/storage/v2/api/tracestore"
-	"github.com/jaegertracing/jaeger/internal/storage/v2/v1adapter"
 )
 
 //go:embed fixtures
@@ -163,7 +159,7 @@ func (s *StorageIntegration) skipIfNeeded(t *testing.T) {
 
 func (*StorageIntegration) waitForCondition(t *testing.T, predicate func(t *testing.T) bool) bool {
 	const iterations = 100 // Will wait at most 100 seconds.
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		if predicate(t) {
 			return true
 		}
@@ -188,7 +184,7 @@ func (s *StorageIntegration) testGetServices(t *testing.T) {
 			t.Log(err)
 			return false
 		}
-		sort.Strings(actual)
+		slices.Sort(actual)
 		t.Logf("Retrieved services: %v", actual)
 		if len(actual) > len(expected) {
 			// If the storage backend returns more services than expected, let's log traces for those
@@ -311,8 +307,8 @@ func (s *StorageIntegration) testGetOperations(t *testing.T) {
 			t.Log(err)
 			return false
 		}
-		sort.Slice(actual, func(i, j int) bool {
-			return actual[i].Name < actual[j].Name
+		slices.SortFunc(actual, func(a, b tracestore.Operation) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 		t.Logf("Retrieved operations: %v", actual)
 		return assert.ObjectsAreEqualValues(expected, actual)
@@ -351,9 +347,9 @@ func (s *StorageIntegration) testGetTrace(t *testing.T) {
 	}
 
 	t.Run("NotFound error", func(t *testing.T) {
-		fakeTraceID := v1adapter.FromV1TraceID(model.TraceID{High: 0, Low: 1})
+		fakeTraceID := pcommon.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 		iterTraces := s.TraceReader.GetTraces(context.Background(), tracestore.GetTraceParams{TraceID: fakeTraceID})
-		traces, err := v1adapter.V1TracesFromSeq2(iterTraces)
+		traces, err := jiter.CollectWithErrors(jptrace.AggregateTraces(iterTraces))
 		require.NoError(t, err) // v2 TraceReader no longer returns an error for not found
 		assert.Empty(t, traces)
 	})
@@ -458,7 +454,6 @@ func (s *StorageIntegration) writeLargeTraceWithDuplicateSpanIds(
 			newSpan.SetSpanID(repeatedSpan.SpanID())
 		default:
 			var spanId [8]byte
-			//nolint:gosec // G115 // i is always positive
 			binary.BigEndian.PutUint64(spanId[:], uint64(i+1))
 			newSpan.SetSpanID(spanId)
 		}
@@ -474,21 +469,18 @@ func (s *StorageIntegration) writeLargeTraceWithDuplicateSpanIds(
 
 func (*StorageIntegration) getTraceFixture(t *testing.T, fixture string) ptrace.Traces {
 	fileName := fmt.Sprintf("fixtures/traces/%s.json", fixture)
-	return getTraceFixtureExact(t, fileName)
+	return loadOTLPTrace(t, fileName)
 }
 
-func getTraceFixtureExact(t *testing.T, fileName string) ptrace.Traces {
-	var trace model.Trace
-	loadAndParseJSONPB(t, fileName, &trace)
-	return v1adapter.V1TraceToOtelTrace(&trace)
-}
-
-func loadAndParseJSONPB(t *testing.T, path string, object proto.Message) {
+func loadOTLPTrace(t *testing.T, fileName string) ptrace.Traces {
 	// #nosec
-	inStr, err := fixtures.ReadFile(path)
-	require.NoError(t, err, "Not expecting error when loading fixture %s", path)
-	err = jsonpb.Unmarshal(bytes.NewReader(correctTime(inStr)), object)
-	require.NoError(t, err, "Not expecting error when unmarshaling fixture %s", path)
+	inStr, err := fixtures.ReadFile(fileName)
+	require.NoError(t, err, "Not expecting error when loading fixture %s", fileName)
+	unmarshaller := ptrace.JSONUnmarshaler{}
+	td, err := unmarshaller.UnmarshalTraces(inStr)
+	require.NoError(t, err, "Not expecting error when unmarshaling fixture %s", fileName)
+	correctTimeForTrace(td)
+	return td
 }
 
 // LoadAndParseQueryTestCases loads and parses query test cases
@@ -515,6 +507,12 @@ func correctTime(jsonData []byte) []byte {
 	retString := strings.ReplaceAll(jsonString, "2017-01-26", yesterday)
 	retString = strings.ReplaceAll(retString, "2017-01-25", twoDaysAgo)
 	return []byte(retString)
+}
+
+func correctTimeForTrace(td ptrace.Traces) {
+	now := time.Now().UTC()
+	normalizer := newDateOffsetNormalizer(now)
+	normalizer.normalizeTrace(td)
 }
 
 func spanCount(traces []ptrace.Traces) int {
@@ -573,8 +571,8 @@ func (s *StorageIntegration) testGetDependencies(t *testing.T) {
 			t.Log(err)
 			return false
 		}
-		sort.Slice(actual, func(i, j int) bool {
-			return actual[i].Parent < actual[j].Parent
+		slices.SortFunc(actual, func(a, b model.DependencyLink) int {
+			return cmp.Compare(a.Parent, b.Parent)
 		})
 		return assert.ObjectsAreEqualValues(expected, actual)
 	})

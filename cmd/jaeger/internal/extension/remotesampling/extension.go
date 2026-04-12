@@ -167,8 +167,7 @@ func (ext *rsExtension) startFileBasedStrategyProvider(_ context.Context) error 
 		DefaultSamplingProbability: fileCfg.DefaultSamplingProbability,
 	}
 
-	//nolint:contextcheck // contextcheck linter complains about next line that context is not passed.
-	provider, err := file.NewProvider(opts, ext.telemetry.Logger)
+	provider, err := file.NewProvider(opts, ext.telemetry.Logger) //nolint:contextcheck // NewProvider does not accept context
 	if err != nil {
 		return fmt.Errorf("failed to create the local file strategy store: %w", err)
 	}
@@ -245,15 +244,12 @@ func (ext *rsExtension) startHTTPServer(ctx context.Context, host component.Host
 		return err
 	}
 
-	ext.shutdownWG.Add(1)
-	go func() {
-		defer ext.shutdownWG.Done()
-
+	ext.shutdownWG.Go(func() {
 		err := ext.httpServer.Serve(hln)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			componentstatus.ReportStatus(host, componentstatus.NewFatalErrorEvent(err))
 		}
-	}()
+	})
 
 	return nil
 }
@@ -280,13 +276,11 @@ func (ext *rsExtension) startGRPCServer(ctx context.Context, host component.Host
 		return err
 	}
 
-	ext.shutdownWG.Add(1)
-	go func() {
-		defer ext.shutdownWG.Done()
+	ext.shutdownWG.Go(func() {
 		if err := ext.grpcServer.Serve(gln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			componentstatus.ReportStatus(host, componentstatus.NewFatalErrorEvent(err))
 		}
-	}()
+	})
 
 	return nil
 }

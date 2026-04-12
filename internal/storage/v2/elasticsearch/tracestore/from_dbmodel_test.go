@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/jaegertracing/jaeger-idl/model/v1"
-	"github.com/jaegertracing/jaeger/internal/storage/elasticsearch/dbmodel"
+	"github.com/jaegertracing/jaeger/internal/storage/v2/elasticsearch/tracestore/core/dbmodel"
 	conventions "github.com/jaegertracing/jaeger/internal/telemetry/otelsemconv"
 )
 
@@ -180,7 +180,7 @@ func Test_SetSpanEventsFromDbSpanLogs(t *testing.T) {
 	}
 
 	dbSpanLogsToSpanEvents(logs, span.Events())
-	for i := 0; i < len(logs); i++ {
+	for i := range logs {
 		assert.Equal(t, testSpanEventTime, span.Events().At(i).Timestamp().AsTime())
 	}
 	assert.Equal(t, 1, span.Events().At(2).Attributes().Len())
@@ -463,7 +463,7 @@ func TestFromDBModelErrors(t *testing.T) {
 			dbSpans: []dbmodel.Span{{
 				TraceID:      dbmodel.TraceID("0123456789abcdef0123456789abcdef"),
 				SpanID:       dbmodel.SpanID("0123456789abcdef"),
-				ParentSpanID: dbmodel.SpanID("invalid-parent-id"),
+				ParentSpanID: dbmodel.SpanID("invalid-par"),
 			}},
 			err: "encoding/hex: invalid byte: U+0069 'i'",
 		},
